@@ -1,0 +1,1092 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Match 3 Saga - Pure JS</title>
+    <style>
+        :root {
+            --bg-color: #2c3e50;
+            --board-bg: #34495e;
+            --text-color: #ecf0f1;
+            --accent-color: #e67e22;
+            --cell-size: 50px; /* Base size, updated via JS for responsiveness */
+            --gap: 4px;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100vh;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        /* UI Overlay */
+        #ui-layer {
+            width: 100%;
+            max-width: 600px;
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 20px;
+            box-sizing: border-box;
+            background: rgba(0,0,0,0.2);
+            z-index: 10;
+        }
+
+        .stat-box {
+            text-align: center;
+        }
+        .stat-label { font-size: 0.8rem; opacity: 0.8; text-transform: uppercase; }
+        .stat-value { font-size: 1.5rem; font-weight: bold; }
+
+        /* Game Container */
+        #game-container {
+            position: relative;
+            margin: auto;
+            background: var(--board-bg);
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            touch-action: none; /* Prevent scroll on mobile */
+        }
+
+        /* The Grid */
+        .cell {
+            position: absolute;
+            background: rgba(0,0,0,0.2);
+            border-radius: 8px;
+        }
+
+        .tile {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+            transition: transform 0.4s ease-in-out, filter 0.2s; /* Slower animation for better visibility */
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* Selection & Interaction */
+        .tile.selected {
+            filter: brightness(1.3);
+            transform: scale(1.1);
+            z-index: 10;
+        }
+        .tile.hint {
+            animation: pulse 1.5s infinite;
+        }
+
+        /* Special Effects Styles */
+        .tile.falling { z-index: 5; transition: top 0.4s ease-in; }
+        .tile.match-anim { animation: pop 0.3s forwards; }
+        
+        /* Blockers (Ice) */
+        .ice {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255, 255, 255, 0.4);
+            border: 2px solid white;
+            border-radius: 8px;
+            z-index: 1;
+            pointer-events: none;
+        }
+
+        /* Modals */
+        #modal-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85);
+            z-index: 100;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+        .hidden { display: none !important; }
+        
+        h1, h2 { margin: 0 0 15px 0; }
+        button {
+            padding: 12px 24px;
+            font-size: 1.2rem;
+            background: var(--accent-color);
+            color: white;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: transform 0.1s;
+            box-shadow: 0 4px 0 #d35400;
+        }
+        button:active { transform: translateY(4px); box-shadow: none; }
+
+        /* Config Modal Styles */
+        #config-modal {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9);
+            z-index: 101;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        textarea {
+            width: 90%;
+            height: 300px;
+            background: #222;
+            color: #0f0;
+            font-family: monospace;
+            border: 1px solid #444;
+            padding: 10px;
+            margin-bottom: 15px;
+            border-radius: 5px;
+        }
+        .btn-group { display: flex; gap: 10px; }
+        .secondary-btn { background: #7f8c8d; }
+
+        /* Animations */
+        @keyframes pop {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.2); }
+            100% { transform: scale(0); opacity: 0; }
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(0.9); filter: brightness(1.2); }
+            100% { transform: scale(1); }
+        }
+
+        /* Objective Bar */
+        #objective-bar {
+            background: #222;
+            width: 100%;
+            padding: 5px;
+            text-align: center;
+            font-size: 0.9rem;
+            color: #ccc;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- UI Header -->
+    <div id="ui-layer">
+        <div class="stat-box">
+            <div class="stat-label">Score</div>
+            <div id="score-display" class="stat-value">0</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Level</div>
+            <div id="level-display" class="stat-value">1</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Moves</div>
+            <div id="moves-display" class="stat-value">20</div>
+        </div>
+        <!-- Config Button -->
+        <button id="config-btn" style="font-size: 0.8rem; padding: 5px 10px; margin-left: 10px;">⚙️</button>
+    </div>
+    <div id="objective-bar">Objective: Reach Target</div>
+
+    <!-- Game Board -->
+    <div id="game-container"></div>
+
+    <!-- Start / End Modal -->
+    <div id="modal-overlay">
+        <h1 id="modal-title">Candy Puzzle</h1>
+        <p id="modal-desc">Match 3 to win!</p>
+        <button id="start-btn">Start Game</button>
+    </div>
+
+    <!-- Config Modal -->
+    <div id="config-modal" class="hidden">
+        <h2>Level Configuration (JSON)</h2>
+        <textarea id="level-config-input"></textarea>
+        <div class="btn-group">
+            <button id="save-config-btn">Save & Restart</button>
+            <button id="close-config-btn" class="secondary-btn">Cancel</button>
+        </div>
+    </div>
+
+<script>
+/**
+ * Match 3 Game Engine - Complete
+ */
+
+// --- 1. CONFIGURATION ---
+
+const TILE_TYPES = 6;
+const ROWS = 8;
+const COLS = 8;
+
+// Define Candy Colors and SVGs
+const CANDY_CONFIG = {
+    0: { color: '#e74c3c', shape: 'circle' },   // Red
+    1: { color: '#f1c40f', shape: 'square' },   // Yellow
+    2: { color: '#2ecc71', shape: 'hex' },      // Green
+    3: { color: '#3498db', shape: 'diamond' },  // Blue
+    4: { color: '#9b59b6', shape: 'triangle' }, // Purple
+    5: { color: '#e67e22', shape: 'star' },     // Orange
+    99: { color: '#ffffff', shape: 'bomb' }     // Color Bomb
+};
+
+// Level Definitions (Editable)
+let LEVELS = [
+    { id: 1, type: 'score', target: 1500, moves: 15, desc: "Score 1500 points", layout: [] },
+    { id: 2, type: 'clear_ice', target: 0, moves: 20, desc: "Clear all the Ice!", layout: [
+        [0,0,0,0,0,0,0,0],
+        [0,1,1,1,1,1,1,0],
+        [0,1,1,1,1,1,1,0],
+        [0,0,0,0,0,0,0,0],
+        [0,0,0,0,0,0,0,0],
+        [0,1,1,1,1,1,1,0],
+        [0,1,1,1,1,1,1,0],
+        [0,0,0,0,0,0,0,0]
+    ]},
+    { id: 3, type: 'score', target: 5000, moves: 25, desc: "Score 5000 points - Advanced", layout: [] }
+];
+
+// --- 2. AUDIO SYSTEM ---
+
+class AudioController {
+    constructor() {
+        this.ctx = null;
+        this.enabled = false;
+    }
+
+    init() {
+        if (!this.ctx) {
+            this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+            this.enabled = true;
+        }
+    }
+
+    playTone(freq, type, duration, vol = 0.1) {
+        if (!this.enabled) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+        gain.gain.setValueAtTime(vol, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start();
+        osc.stop(this.ctx.currentTime + duration);
+    }
+
+    playSwap() { this.playTone(300, 'sine', 0.1, 0.05); }
+    playMatch() { 
+        this.playTone(600, 'sine', 0.2, 0.1); 
+        setTimeout(() => this.playTone(900, 'triangle', 0.2, 0.1), 100);
+    }
+    playInvalid() { this.playTone(150, 'sawtooth', 0.3, 0.05); }
+    playBomb() { 
+        this.playTone(100, 'square', 0.5, 0.2); 
+        this.playTone(50, 'sawtooth', 0.5, 0.2);
+    }
+}
+
+// --- 3. HELPER FUNCTIONS ---
+
+const generateUUID = () => Math.random().toString(36).substr(2, 9);
+const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// SVG Generator
+const getCandySVG = (type, special = null) => {
+    if (type === 99) { // Color Bomb
+        return `<svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="#222" /><circle cx="35" cy="35" r="10" fill="white" opacity="0.5"/><path d="M50 10 L50 90 M10 50 L90 50" stroke="${CANDY_CONFIG[Math.floor(Math.random()*6)].color}" stroke-width="5"/></svg>`;
+    }
+
+    const cfg = CANDY_CONFIG[type];
+    let shapePath = '';
+    
+    switch(cfg.shape) {
+        case 'circle': shapePath = `<circle cx="50" cy="50" r="40" fill="${cfg.color}" />`; break;
+        case 'square': shapePath = `<rect x="15" y="15" width="70" height="70" rx="10" fill="${cfg.color}" />`; break;
+        case 'triangle': shapePath = `<polygon points="50,10 90,90 10,90" fill="${cfg.color}" />`; break;
+        case 'hex': shapePath = `<polygon points="50,10 90,30 90,70 50,90 10,70 10,30" fill="${cfg.color}" />`; break;
+        case 'diamond': shapePath = `<polygon points="50,10 90,50 50,90 10,50" fill="${cfg.color}" />`; break;
+        case 'star': shapePath = `<polygon points="50,10 61,40 95,40 67,60 78,90 50,70 22,90 33,60 5,40 39,40" fill="${cfg.color}" />`; break;
+    }
+
+    const highlight = `<ellipse cx="35" cy="35" rx="15" ry="8" fill="white" opacity="0.3" transform="rotate(-45 35 35)" />`;
+    
+    let specialMarker = '';
+    if (special === 'horizontal') specialMarker = `<rect x="10" y="45" width="80" height="10" fill="white" opacity="0.8"/>`;
+    if (special === 'vertical') specialMarker = `<rect x="45" y="10" width="10" height="80" fill="white" opacity="0.8"/>`;
+    if (special === 'wrapped') specialMarker = `<rect x="30" y="30" width="40" height="40" stroke="white" stroke-width="5" fill="none" opacity="0.8"/>`;
+
+    return `<svg viewBox="0 0 100 100" style="width:80%; height:80%; filter: drop-shadow(2px 4px 6px rgba(0,0,0,0.3));">${shapePath}${highlight}${specialMarker}</svg>`;
+};
+
+// --- 4. GAME LOGIC ---
+
+class Game {
+    constructor() {
+        this.grid = []; // 2D array of Tile Objects
+        this.iceGrid = []; // NEW: 2D array to track Ice state per cell (Static)
+        this.width = ROWS;
+        this.height = COLS;
+        this.score = 0;
+        this.moves = 0;
+        this.state = 'IDLE'; // IDLE, ANIMATING, GAMEOVER
+        this.selectedTile = null;
+        this.level = 1;
+        this.levelConfig = null;
+        this.audio = new AudioController();
+        
+        // DOM Elements
+        this.container = document.getElementById('game-container');
+        this.scoreEl = document.getElementById('score-display');
+        this.movesEl = document.getElementById('moves-display');
+        this.modal = document.getElementById('modal-overlay');
+        
+        // Config Elements
+        this.configModal = document.getElementById('config-modal');
+        this.configInput = document.getElementById('level-config-input');
+        
+        this.initInput();
+        this.initConfigUI();
+    }
+
+    initConfigUI() {
+        document.getElementById('config-btn').onclick = () => {
+            this.configInput.value = JSON.stringify(LEVELS, null, 2);
+            this.configModal.classList.remove('hidden');
+        };
+        
+        document.getElementById('close-config-btn').onclick = () => {
+            this.configModal.classList.add('hidden');
+        };
+        
+        document.getElementById('save-config-btn').onclick = () => {
+            try {
+                const newLevels = JSON.parse(this.configInput.value);
+                if (Array.isArray(newLevels)) {
+                    LEVELS = newLevels;
+                    this.configModal.classList.add('hidden');
+                    this.startLevel(1); 
+                } else {
+                    alert("Invalid JSON: Must be an array of levels");
+                }
+            } catch (e) {
+                alert("Invalid JSON Syntax");
+            }
+        };
+    }
+
+    startLevel(levelIndex) {
+        this.level = levelIndex;
+        this.levelConfig = LEVELS[levelIndex - 1];
+        this.score = 0;
+        this.moves = this.levelConfig.moves;
+        
+        // FIX: Reset game state to IDLE so inputs work again
+        this.state = 'IDLE'; 
+        this.selectedTile = null;
+
+        // Setup UI
+        document.getElementById('level-display').innerText = this.level;
+        document.getElementById('objective-bar').innerText = this.levelConfig.desc;
+        this.updateUI();
+        this.modal.classList.add('hidden');
+        this.audio.init();
+
+        this.resizeBoard();
+        window.addEventListener('resize', () => this.resizeBoard());
+
+        this.createBoard();
+    }
+
+    resizeBoard() {
+        const maxWidth = Math.min(window.innerWidth - 20, 600);
+        const maxHeight = window.innerHeight - 150;
+        const size = Math.min(maxWidth / this.width, maxHeight / this.height);
+        
+        document.documentElement.style.setProperty('--cell-size', `${size}px`);
+        this.cellSize = size;
+        this.container.style.width = `${this.width * size}px`;
+        this.container.style.height = `${this.height * size}px`;
+        
+        if(this.grid.length) this.renderAllPositions();
+    }
+
+    createBoard() {
+        this.grid = [];
+        this.iceGrid = []; // Reset Ice Grid
+        this.container.innerHTML = ''; 
+
+        for (let r = 0; r < this.height; r++) {
+            this.grid[r] = [];
+            this.iceGrid[r] = []; // Init row
+            for (let c = 0; c < this.width; c++) {
+                const cell = document.createElement('div');
+                cell.className = 'cell';
+                cell.style.width = 'var(--cell-size)';
+                cell.style.height = 'var(--cell-size)';
+                cell.style.left = (c * 100 / this.width) + '%';
+                cell.style.top = (r * 100 / this.height) + '%';
+                this.container.appendChild(cell);
+
+                let hasIce = false;
+                if (this.levelConfig.layout && this.levelConfig.layout[r] && this.levelConfig.layout[r][c] === 1) {
+                    hasIce = true;
+                    this.iceGrid[r][c] = 1; // Mark Ice in Grid
+                    const ice = document.createElement('div');
+                    ice.className = 'ice';
+                    ice.id = `ice-${r}-${c}`;
+                    cell.appendChild(ice);
+                } else {
+                    this.iceGrid[r][c] = 0;
+                }
+
+                // Initial Random Tile (No matches)
+                let type;
+                do {
+                    type = Math.floor(Math.random() * TILE_TYPES);
+                } while (
+                    (c >= 2 && this.grid[r][c-1].type === type && this.grid[r][c-2].type === type) ||
+                    (r >= 2 && this.grid[r-1][c].type === type && this.grid[r-2][c].type === type)
+                );
+
+                // We no longer pass 'hasIce' to addTile, as it's handled by iceGrid
+                this.addTile(r, c, type, false); 
+            }
+        }
+    }
+
+    addTile(r, c, type, hasIce = false, special = null) {
+        const tileData = {
+            r, c, type, special, 
+            id: generateUUID(),
+            el: null,
+            // hasIce property removed from tileData to prevent logic carry-over
+        };
+        
+        const el = document.createElement('div');
+        el.className = 'tile';
+        el.innerHTML = getCandySVG(type, special);
+        el.dataset.id = tileData.id;
+        
+        this.setTilePosition(el, r, c);
+        
+        this.container.appendChild(el);
+        tileData.el = el;
+        this.grid[r][c] = tileData;
+        return tileData;
+    }
+
+    setTilePosition(el, r, c) {
+        el.style.top = `${r * this.cellSize}px`;
+        el.style.left = `${c * this.cellSize}px`;
+        el.style.width = `${this.cellSize}px`;
+        el.style.height = `${this.cellSize}px`;
+    }
+
+    renderAllPositions() {
+        for(let r=0; r<this.height; r++){
+            for(let c=0; c<this.width; c++){
+                if(this.grid[r][c] && this.grid[r][c].el) {
+                    this.setTilePosition(this.grid[r][c].el, r, c);
+                }
+            }
+        }
+    }
+
+    // --- INPUT HANDLING ---
+
+    initInput() {
+        let startX, startY;
+        let isDown = false;
+
+        const handleStart = (x, y, target) => {
+            if (this.state !== 'IDLE') return;
+            if (target.closest('#ui-layer') || target.closest('#modal-overlay') || target.closest('#config-modal')) return;
+
+            const tileEl = target.closest('.tile');
+            if (!tileEl) return;
+            
+            startX = x;
+            startY = y;
+            isDown = true;
+            
+            const r = Math.round(parseInt(tileEl.style.top) / this.cellSize);
+            const c = Math.round(parseInt(tileEl.style.left) / this.cellSize);
+            
+            const tile = this.grid[r][c];
+
+            // FIX: Check iceGrid instead of tile property
+            if (this.iceGrid[r][c] === 1) {
+                this.audio.playInvalid();
+                tileEl.style.transform = "scale(0.95)";
+                setTimeout(() => tileEl.style.transform = "", 200);
+                isDown = false;
+                return;
+            }
+            
+            if (tile) {
+                this.selectTile(tile);
+            }
+        };
+
+        const handleMove = (x, y) => {
+            if (!this.selectedTile || this.state !== 'IDLE' || !isDown) return;
+            
+            const dx = x - startX;
+            const dy = y - startY;
+            const absDx = Math.abs(dx);
+            const absDy = Math.abs(dy);
+
+            // Drag Threshold
+            if (Math.max(absDx, absDy) > 20) {
+                let targetR = this.selectedTile.r;
+                let targetC = this.selectedTile.c;
+
+                if (absDx > absDy) {
+                    targetC += dx > 0 ? 1 : -1;
+                } else {
+                    targetR += dy > 0 ? 1 : -1;
+                }
+
+                if (targetR >= 0 && targetR < this.height && targetC >= 0 && targetC < this.width) {
+                    const targetTile = this.grid[targetR][targetC];
+
+                    // FIX: Check iceGrid for target
+                    if (this.iceGrid[targetR][targetC] === 1) {
+                        this.audio.playInvalid();
+                        this.deselectTile();
+                        isDown = false;
+                        return;
+                    }
+
+                    this.attemptSwap(this.selectedTile, targetTile);
+                }
+                
+                isDown = false;
+                this.deselectTile();
+            }
+        };
+
+        const handleEnd = () => {
+            isDown = false;
+            this.deselectTile();
+        };
+
+        // Mouse
+        this.container.addEventListener('mousedown', e => handleStart(e.clientX, e.clientY, e.target));
+        this.container.addEventListener('mousemove', e => handleMove(e.clientX, e.clientY));
+        window.addEventListener('mouseup', handleEnd);
+        
+        // Touch
+        this.container.addEventListener('touchstart', e => {
+            handleStart(e.touches[0].clientX, e.touches[0].clientY, e.target);
+        }, {passive: false});
+        this.container.addEventListener('touchmove', e => {
+            if(isDown) handleMove(e.touches[0].clientX, e.touches[0].clientY);
+        }, {passive: false});
+        window.addEventListener('touchend', handleEnd);
+    }
+
+    selectTile(tile) {
+        if (this.selectedTile) {
+            const dr = Math.abs(this.selectedTile.r - tile.r);
+            const dc = Math.abs(this.selectedTile.c - tile.c);
+            
+            if (dr + dc === 1) {
+                this.attemptSwap(this.selectedTile, tile);
+                this.deselectTile();
+            } else {
+                this.deselectTile();
+                this.selectedTile = tile;
+                tile.el.classList.add('selected');
+            }
+        } else {
+            this.selectedTile = tile;
+            tile.el.classList.add('selected');
+        }
+    }
+
+    deselectTile() {
+        if (this.selectedTile) {
+            this.selectedTile.el.classList.remove('selected');
+            this.selectedTile = null;
+        }
+    }
+
+    async attemptSwap(tile1, tile2) {
+        // FIX: Check iceGrid for swap validation
+        if (this.iceGrid[tile1.r][tile1.c] === 1 || this.iceGrid[tile2.r][tile2.c] === 1) {
+            this.audio.playInvalid();
+            this.deselectTile();
+            
+            // Visual feedback
+            const lockedTile = (this.iceGrid[tile1.r][tile1.c] === 1) ? tile1 : tile2;
+            if (lockedTile && lockedTile.el) {
+                lockedTile.el.style.transform = "scale(0.95)";
+                setTimeout(() => { if(lockedTile.el) lockedTile.el.style.transform = ""; }, 200);
+            }
+            return;
+        }
+
+        this.state = 'ANIMATING';
+        this.deselectTile();
+
+        // 1. Visual Swap
+        await this.animateSwap(tile1, tile2);
+
+        // 2. Logic Swap
+        this.swapData(tile1, tile2);
+
+        // 3. Logic Checks
+        const matches = this.findMatches();
+        const isBombSwap = tile1.type === 99 || tile2.type === 99;
+        // NEW: Check if both tiles are special (Striped or Wrapped)
+        const isSpecialCombo = tile1.special && tile2.special;
+
+        if (matches.length > 0 || isBombSwap || isSpecialCombo) {
+            this.moves--;
+            this.updateUI();
+            this.audio.playSwap();
+            
+            if (isBombSwap) {
+                await this.handleBombSwap(tile1, tile2);
+            } else if (isSpecialCombo) {
+                // NEW: Handle Special + Special combos
+                await this.handleSpecialCombo(tile1, tile2);
+            } else {
+                await this.processMatches(matches);
+            }
+
+            // Always check for cascades after the primary action
+            if (isBombSwap || isSpecialCombo) {
+                await this.applyGravity();
+                this.syncVisuals();
+                const cascadeMatches = this.findMatches();
+                await this.processMatches(cascadeMatches);
+            }
+
+        } else {
+            // Invalid - Swap Back
+            this.audio.playInvalid();
+            await this.animateSwap(tile1, tile2);
+            this.swapData(tile1, tile2);
+            this.state = 'IDLE';
+        }
+    }
+
+    // --- RESTORED HELPER METHODS ---
+
+    swapData(t1, t2) {
+        this.grid[t1.r][t1.c] = t2;
+        this.grid[t2.r][t2.c] = t1;
+        
+        const tempR = t1.r, tempC = t1.c;
+        t1.r = t2.r; t1.c = t2.c;
+        t2.r = tempR; t2.c = tempC;
+    }
+
+    animateSwap(t1, t2) {
+        return new Promise(resolve => {
+            // Visual cross
+            this.setTilePosition(t1.el, t2.r, t2.c);
+            this.setTilePosition(t2.el, t1.r, t1.c);
+            setTimeout(resolve, 400); 
+        });
+    }
+
+    findMatches() {
+        const matched = new Set();
+        
+        // Horizontal
+        for (let r = 0; r < this.height; r++) {
+            for (let c = 0; c < this.width - 2; c++) {
+                const t1 = this.grid[r][c], t2 = this.grid[r][c+1], t3 = this.grid[r][c+2];
+                if (!t1 || !t2 || !t3) continue;
+                if (t1.type === t2.type && t1.type === t3.type && t1.type !== 99) {
+                    matched.add(t1); matched.add(t2); matched.add(t3);
+                }
+            }
+        }
+
+        // Vertical
+        for (let c = 0; c < this.width; c++) {
+            for (let r = 0; r < this.height - 2; r++) {
+                const t1 = this.grid[r][c], t2 = this.grid[r+1][c], t3 = this.grid[r+2][c];
+                if (!t1 || !t2 || !t3) continue;
+                if (t1.type === t2.type && t1.type === t3.type && t1.type !== 99) {
+                    matched.add(t1); matched.add(t2); matched.add(t3);
+                }
+            }
+        }
+
+        return Array.from(matched);
+    }
+
+    getMatchGroups(matches) {
+        const groups = [];
+        const visited = new Set();
+        
+        const isAdjacent = (t1, t2) => (Math.abs(t1.r - t2.r) + Math.abs(t1.c - t2.c)) === 1;
+
+        for (const tile of matches) {
+            if (visited.has(tile.id)) continue;
+            
+            const group = [tile];
+            visited.add(tile.id);
+            const queue = [tile];
+            
+            while (queue.length > 0) {
+                const current = queue.shift();
+                for (const candidate of matches) {
+                    if (!visited.has(candidate.id) && 
+                        candidate.type === current.type && 
+                        isAdjacent(current, candidate)) {
+                        
+                        visited.add(candidate.id);
+                        group.push(candidate);
+                        queue.push(candidate);
+                    }
+                }
+            }
+            groups.push(group);
+        }
+        return groups;
+    }
+
+    async handleBombSwap(t1, t2) {
+        const bomb = t1.type === 99 ? t1 : t2;
+        const other = t1.type === 99 ? t2 : t1;
+        
+        this.audio.playBomb();
+
+        if (other.type === 99) {
+            // Bomb + Bomb
+            for(let r=0; r<ROWS; r++) {
+                for(let c=0; c<COLS; c++) {
+                    this.clearTile(this.grid[r][c]);
+                }
+            }
+        } else {
+            // Bomb + Color
+            const targetType = other.type;
+            for(let r=0; r<ROWS; r++) {
+                for(let c=0; c<COLS; c++) {
+                    if (this.grid[r][c].type === targetType) {
+                        this.grid[r][c].el.classList.add('match-anim');
+                        await wait(50);
+                        this.clearTile(this.grid[r][c]);
+                    }
+                }
+            }
+            this.clearTile(bomb);
+        }
+    }
+
+    // --- END RESTORED HELPER METHODS ---
+
+    // NEW: Handle combos like Stripe+Stripe, Stripe+Wrapped, Wrapped+Wrapped
+    async handleSpecialCombo(t1, t2) {
+        this.audio.playMatch();
+        const tilesToRemove = new Set([t1, t2]);
+        
+        // Define effect types
+        const isStripe = t => t.special === 'horizontal' || t.special === 'vertical';
+        const isWrapped = t => t.special === 'wrapped';
+
+        // 1. Stripe + Stripe (Cross Clear)
+        if (isStripe(t1) && isStripe(t2)) {
+            for(let c=0; c<this.width; c++) tilesToRemove.add(this.grid[t1.r][c]); // Row
+            for(let r=0; r<this.height; r++) tilesToRemove.add(this.grid[r][t1.c]); // Col
+        }
+        // 2. Wrapped + Wrapped (Big Boom)
+        else if (isWrapped(t1) && isWrapped(t2)) {
+            for(let r=t1.r-2; r<=t1.r+2; r++) {
+                for(let c=t1.c-2; c<=t1.c+2; c++) {
+                    if(r>=0 && r<ROWS && c>=0 && c<COLS) tilesToRemove.add(this.grid[r][c]);
+                }
+            }
+        }
+        // 3. Stripe + Wrapped (3-Row/Col Cross)
+        else {
+            const targetR = t1.r; // Center on target
+            const targetC = t1.c;
+            
+            // Clear 3 Rows
+            for (let r = targetR - 1; r <= targetR + 1; r++) {
+                if(r>=0 && r<ROWS) {
+                    for(let c=0; c<this.width; c++) tilesToRemove.add(this.grid[r][c]);
+                }
+            }
+            // Clear 3 Cols
+            for (let c = targetC - 1; c <= targetC + 1; c++) {
+                if(c>=0 && c<COLS) {
+                    for(let r=0; r<this.height; r++) tilesToRemove.add(this.grid[r][c]);
+                }
+            }
+        }
+
+        // Execute clearance
+        tilesToRemove.forEach(t => this.clearTile(t));
+        this.score += tilesToRemove.size * 20;
+        this.updateUI();
+        await wait(300);
+    }
+
+    async processMatches(matches) {
+        if (matches.length === 0) {
+            this.state = 'IDLE';
+            this.syncVisuals();
+            this.checkGameStatus();
+            return;
+        }
+
+        this.audio.playMatch();
+        
+        // UPDATED: Recursive Blast Logic
+        // We use a Queue to keep processing new specials hit by explosions
+        const tilesToRemove = new Set(matches);
+        const processedSpecials = new Set();
+        const queue = [...matches];
+
+        while(queue.length > 0) {
+            const t = queue.shift();
+            
+            // If this tile triggers an effect and hasn't been processed yet
+            if (t.special && !processedSpecials.has(t.id)) {
+                processedSpecials.add(t.id);
+                
+                // Add blast area to tilesToRemove and Queue
+                const addToBlast = (r, c) => {
+                    if (r>=0 && r<ROWS && c>=0 && c<COLS && this.grid[r][c]) {
+                        const target = this.grid[r][c];
+                        if (!tilesToRemove.has(target)) {
+                            tilesToRemove.add(target);
+                            // If the hit tile is also special, add to queue for chain reaction
+                            if (target.special) queue.push(target);
+                        }
+                    }
+                };
+
+                if (t.special === 'horizontal') {
+                    for(let c=0; c<this.width; c++) addToBlast(t.r, c);
+                }
+                else if (t.special === 'vertical') {
+                    for(let r=0; r<this.height; r++) addToBlast(r, t.c);
+                }
+                else if (t.special === 'wrapped') {
+                    for(let r=t.r-1; r<=t.r+1; r++) {
+                        for(let c=t.c-1; c<=t.c+1; c++) addToBlast(r, c);
+                    }
+                }
+            }
+        }
+
+        // Advanced Shape Detection (Logic remains same as before)
+        const groups = this.getMatchGroups(matches);
+        const specialsToSpawn = [];
+        
+        groups.forEach(group => {
+            if (group.length < 4) return;
+            
+            const rs = group.map(t => t.r);
+            const cs = group.map(t => t.c);
+            const height = Math.max(...rs) - Math.min(...rs) + 1;
+            const width = Math.max(...cs) - Math.min(...cs) + 1;
+            const center = group[Math.floor(group.length / 2)];
+
+            // Ensure we don't accidentally spawn on a tile that isn't being removed
+            // (Only spawn if the center is actually part of the match set)
+            if (!tilesToRemove.has(center)) return;
+
+            if (group.length >= 5) {
+                if (width === group.length || height === group.length) {
+                    specialsToSpawn.push({ r: center.r, c: center.c, type: 99 });
+                } else {
+                    specialsToSpawn.push({ r: center.r, c: center.c, type: center.type, special: 'wrapped' });
+                }
+            } else if (group.length === 4) {
+                const isVertical = height > width;
+                specialsToSpawn.push({ 
+                    r: center.r, 
+                    c: center.c, 
+                    type: center.type, 
+                    special: isVertical ? 'horizontal' : 'vertical'
+                });
+            }
+        });
+
+        // Remove Tiles
+        tilesToRemove.forEach(t => this.clearTile(t));
+
+        // Score Calculation
+        this.score += tilesToRemove.size * 10;
+        specialsToSpawn.forEach(() => this.score += 50);
+        this.updateUI();
+
+        await wait(300);
+
+        // Spawn Specials
+        specialsToSpawn.forEach(s => {
+            if(this.grid[s.r][s.c] === null) {
+                this.grid[s.r][s.c] = this.addTile(s.r, s.c, s.type, false, s.special);
+            }
+        });
+
+        await this.applyGravity();
+        this.syncVisuals(); 
+
+        const newMatches = this.findMatches();
+        if (newMatches.length > 0) {
+            await wait(200);
+            await this.processMatches(newMatches);
+        } else {
+            this.state = 'IDLE';
+            this.checkGameStatus();
+        }
+    }
+
+    clearTile(tile) {
+        if (!tile || !tile.el) return;
+        
+        // FIX: Check and Clear ice from iceGrid
+        if (this.iceGrid[tile.r][tile.c] === 1) {
+            this.iceGrid[tile.r][tile.c] = 0; // Remove logical ice
+            const iceEl = document.getElementById(`ice-${tile.r}-${tile.c}`);
+            if (iceEl) iceEl.remove();
+            this.score += 20;
+        }
+
+        tile.el.classList.add('match-anim');
+        tile.el.style.zIndex = '1'; 
+        
+        setTimeout(() => {
+            if(tile.el && tile.el.parentNode) tile.el.remove();
+        }, 300);
+
+        if (this.grid[tile.r][tile.c] === tile) {
+            this.grid[tile.r][tile.c] = null;
+        }
+    }
+
+    // Fix overlap issues
+    syncVisuals() {
+        const validIds = new Set();
+        for(let r=0; r<this.height; r++){
+            for(let c=0; c<this.width; c++){
+                if(this.grid[r][c]) {
+                    validIds.add(this.grid[r][c].id);
+                    if(this.grid[r][c].el) {
+                        this.setTilePosition(this.grid[r][c].el, r, c);
+                    }
+                }
+            }
+        }
+        document.querySelectorAll('.tile').forEach(el => {
+            if (!validIds.has(el.dataset.id) && !el.classList.contains('match-anim')) {
+                el.remove();
+            }
+        });
+    }
+
+    async applyGravity() {
+        let moved = false;
+        // Shift Down
+        for (let c = 0; c < this.width; c++) {
+            let emptySlots = 0;
+            for (let r = this.height - 1; r >= 0; r--) {
+                if (this.grid[r][c] === null) {
+                    emptySlots++;
+                } else if (emptySlots > 0) {
+                    const tile = this.grid[r][c];
+                    const targetR = r + emptySlots;
+                    
+                    this.grid[targetR][c] = tile;
+                    this.grid[r][c] = null;
+                    tile.r = targetR;
+                    tile.el.classList.add('falling');
+                    this.setTilePosition(tile.el, tile.r, tile.c);
+                    moved = true;
+                }
+            }
+            // Fill Top
+            for (let r = 0; r < emptySlots; r++) {
+                if(this.grid[r][c] === null) {
+                    const type = Math.floor(Math.random() * TILE_TYPES);
+                    const tile = this.addTile(r, c, type);
+                    tile.el.style.top = `-${(emptySlots - r) * this.cellSize}px`;
+                    tile.el.classList.add('falling');
+                    void tile.el.offsetWidth; 
+                    this.setTilePosition(tile.el, r, c);
+                }
+            }
+        }
+        if (moved || true) await wait(400);
+        document.querySelectorAll('.falling').forEach(el => el.classList.remove('falling'));
+    }
+
+    updateUI() {
+        this.scoreEl.textContent = this.score;
+        this.movesEl.textContent = this.moves;
+        const percent = Math.min(100, (this.score / this.levelConfig.target) * 100);
+        document.getElementById('objective-bar').style.background = `linear-gradient(90deg, #27ae60 ${percent}%, #222 ${percent}%)`;
+    }
+
+    checkGameStatus() {
+        let won = false;
+        
+        // FIX: Win condition now checks iceGrid instead of DOM
+        if (this.levelConfig.type === 'score' && this.score >= this.levelConfig.target) won = true;
+        else if (this.levelConfig.type === 'clear_ice') {
+            // Check if any 1s remain in iceGrid
+            const iceRemains = this.iceGrid.some(row => row.includes(1));
+            if (!iceRemains) won = true;
+        }
+
+        if (won) {
+            this.state = 'GAMEOVER';
+            this.showModal("Level Complete!", "You are tasty!", "Next Level", () => {
+                const nextLevel = this.level + 1;
+                if(nextLevel <= LEVELS.length) this.startLevel(nextLevel);
+                else this.showModal("You Win!", "All levels completed.", "Restart", () => this.startLevel(1));
+            });
+            return;
+        }
+
+        if (this.moves <= 0) {
+            this.state = 'GAMEOVER';
+            this.showModal("Out of Moves", "Failed to reach target.", "Try Again", () => this.startLevel(this.level));
+        }
+    }
+
+    showModal(title, text, btnText, action) {
+        document.getElementById('modal-title').innerText = title;
+        document.getElementById('modal-desc').innerText = text;
+        const btn = document.getElementById('start-btn');
+        btn.innerText = btnText;
+        btn.onclick = () => action();
+        this.modal.classList.remove('hidden');
+    }
+}
+
+// --- INIT ---
+window.onload = () => {
+    const game = new Game();
+    document.getElementById('start-btn').onclick = () => {
+        game.startLevel(1);
+    };
+};
+</script>
+</body>
+</html>
